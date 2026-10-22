@@ -286,6 +286,33 @@ details summary::-webkit-details-marker{display:none}
   .kb .val{font-size:.94rem}
   main{padding:12px 8px 8px}
 }
+
+/* Formel/Kommentar zu Beträgen */
+.amtWrap{position:relative;display:inline-flex;flex-direction:column;align-items:flex-end;vertical-align:top}
+table.ledger td input.hasF{border-style:dashed;border-color:var(--primary)}
+.memoBtn{position:absolute;top:-7px;left:-7px;width:18px;height:18px;padding:2px;border-radius:99px;
+  background:var(--card);border:1px solid var(--rule-strong);color:var(--muted);opacity:0;transition:opacity .12s;line-height:0}
+.memoBtn .btnIco{width:12px;height:12px;margin:0}
+.amtWrap:hover .memoBtn,.amtWrap:focus-within .memoBtn{opacity:1}
+.memoBtn.has{opacity:1;color:var(--primary);border-color:var(--primary);background:var(--primary-soft)}
+@media(hover:none){.memoBtn{opacity:.55}}
+.memoCap{display:block;max-width:170px;margin-top:2px;font-size:.66rem;line-height:1.25;color:var(--muted);
+  text-align:right;white-space:normal;overflow-wrap:anywhere}
+.memoCap b{color:var(--on-soft);font-weight:600;font-variant-numeric:tabular-nums}
+.memoBack{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.5);display:grid;place-items:center;padding:16px}
+.memoBox{background:var(--card);border:1px solid var(--rule-strong);border-radius:var(--radius);box-shadow:var(--shadow);
+  width:100%;max-width:420px;padding:18px}
+.memoBox label{display:block;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:12px}
+.memoBox input,.memoBox textarea{display:block;width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--rule-strong);
+  border-radius:8px;background:var(--input-bg);color:var(--ink);font:inherit;font-size:.9rem;text-transform:none;letter-spacing:0;resize:vertical}
+.memoBox input:focus,.memoBox textarea:focus{border-color:var(--primary);outline:none;box-shadow:0 0 0 3px var(--primary-soft)}
+.memoBtns{display:flex;gap:8px;align-items:center;margin-top:4px}
+/* Konten: am PC genug Breite, damit alle Spalten (Prognose, ＋, −, Saldo) ohne Scrollen sichtbar sind */
+@media(min-width:900px){
+  .cardGrid.kontenGrid{grid-template-columns:repeat(auto-fit,minmax(min(100%,560px),1fr))}
+  .kontenGrid table.ledger td input{width:100px}
+  .kontenGrid .scrollX{margin:0;padding:0}
+}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -402,7 +429,8 @@ const ICON_PATHS={
   link:'<path d="M10 14a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 10a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5"/>',
   hourglass:'<path d="M6 3H18"/><path d="M6 21H18"/><path d="M6 3C6 8 12 9 12 12C12 15 6 16 6 21"/><path d="M18 3C18 8 12 9 12 12C12 15 18 16 18 21"/>',
   download:'<path d="M12 3V15"/><path d="M7 10L12 15L17 10"/><path d="M4 17V19A2 2 0 0 0 6 21H18A2 2 0 0 0 20 19V17"/>',
-  warn:'<path d="M12 3.5L22 20.5H2Z"/><path d="M12 10V15"/><path d="M12 18.3V18.4"/>'
+  warn:'<path d="M12 3.5L22 20.5H2Z"/><path d="M12 10V15"/><path d="M12 18.3V18.4"/>',
+  note:'<path d="M4 4.5H20V16H13L8 20.5V16H4Z"/><path d="M8 9H16"/><path d="M8 12.5H13"/>'
 };
 function ic(name){
   return '<svg class="btnIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+(ICON_PATHS[name]||'')+'</svg>';
@@ -460,6 +488,33 @@ const chf=n=>fmt(n)+' Fr.';
 const fmtInp=v=>(v===''||v==null||isNaN(v))?'':Number(v).toLocaleString('de-CH',{minimumFractionDigits:2,maximumFractionDigits:2});
 const fmtIntInp=v=>(v===''||v==null||isNaN(v))?'':Number(v).toLocaleString('de-CH',{maximumFractionDigits:0});
 const pAmt=s=>{const v=parseFloat(String(s).replace(/'/g,'').replace(/,/g,'.'));return isNaN(v)?0:Math.round(v*100)/100;};
+// Formel-Eingabe wie in Excel (z.B. =58.4+76.5+128.8): eigener kleiner Parser
+// (+ − * / und Klammern), bewusst ohne eval.
+function evalFormula(src){
+  const s=String(src).replace(/^\s*=/,'').replace(/'/g,'').replace(/,/g,'.').replace(/\s+/g,'').replace(/×/g,'*').replace(/÷/g,'/');
+  let i=0;
+  const bad=()=>{throw new Error('Formel ungültig');};
+  function num(){ const m=/^(\d+\.?\d*|\.\d+)/.exec(s.slice(i)); if(!m) bad(); i+=m[0].length; return parseFloat(m[0]); }
+  function factor(){
+    if(s[i]==='-'){ i++; return -factor(); }
+    if(s[i]==='+'){ i++; return factor(); }
+    if(s[i]==='('){ i++; const v=expr(); if(s[i]!==')') bad(); i++; return v; }
+    return num();
+  }
+  function term(){ let v=factor(); while(s[i]==='*'||s[i]==='/'){ const o=s[i++]; const r=factor(); v=o==='*'?v*r:v/r; } return v; }
+  function expr(){ let v=term(); while(s[i]==='+'||s[i]==='-'){ const o=s[i++]; const r=term(); v=o==='+'?v+r:v-r; } return v; }
+  const v=expr();
+  if(i!==s.length||!isFinite(v)) bad();
+  return Math.round(v*100)/100;
+}
+const looksLikeFormula=s=>/^\s*=/.test(s)||/[\d)]\s*[-+*/×÷]\s*[\d(.\-]/.test(s);
+// Liefert {val,f}: f ist der Formeltext (mit führendem "="), falls eine Formel eingegeben wurde.
+function parseAmountInput(raw){
+  const t=String(raw).trim();
+  if(!looksLikeFormula(t)) return {val:pAmt(t),f:null};
+  const val=evalFormula(t);
+  return {val,f:'='+t.replace(/^\s*=\s*/,'')};
+}
 const pInt=s=>{const v=parseFloat(String(s).replace(/'/g,'').replace(/,/g,'.'));return isNaN(v)?0:Math.round(v);};
 const pRate=s=>{const v=parseFloat(String(s).replace(/'/g,'').replace(/,/g,'.'));return isNaN(v)?0:Math.round(v*1e6)/1e6;};
 const pPct=s=>{const v=parseFloat(String(s).replace(/'/g,'').replace(/,/g,'.'));return isNaN(v)?0:Math.round(v/100*1e8)/1e8;};
@@ -650,9 +705,65 @@ function inp(path,val,opts={}){
   const kind=opts.kind||'num';
   const shown=kind==='num'?fmtInp(val):kind==='int'?fmtIntInp(val):kind==='pct'?fmtPct(val):(val??'');
   const ph=opts.placeholder?' placeholder="'+esc(opts.placeholder)+'"':'';
+  if(opts.memo&&kind==='num'&&!/\.\d+$/.test(path)){
+    // Notiz/Formel liegt direkt neben dem Wert (<feld>_m), wandert also mit der Zeile mit
+    const memo=getPath(years[year],path+'_m')||{};
+    const has=!!(memo.f||memo.c);
+    const cls=(opts.cls?opts.cls+' ':'')+(memo.f?'hasF':'');
+    const tip=[memo.f,memo.c].filter(Boolean).join('  –  ');
+    return '<span class="amtWrap"><input data-path="'+path+'" data-kind="num" data-memo="1"'+ph+
+      (cls.trim()?' class="'+cls.trim()+'"':'')+(memo.f?' data-f="'+esc(memo.f)+'" data-shown="'+shown+'"':'')+
+      (tip?' title="'+esc(tip)+'"':'')+' value="'+shown+'">'+
+      '<button class="memoBtn'+(has?' has':'')+'" data-act="memo" data-path="'+path+'" title="Formel / Kommentar">'+ic('note')+'</button>'+
+      (has?'<span class="memoCap" title="'+esc(tip)+'">'+(memo.f?'<b>'+esc(memo.f)+'</b>':'')+(memo.f&&memo.c?' ':'')+esc(memo.c||'')+'</span>':'')+
+      '</span>';
+  }
   const cls=opts.cls?' class="'+opts.cls+'"':'';
   return '<input data-path="'+path+'" data-kind="'+kind+'"'+ph+cls+' value="'+shown+'">';
 }
+function memoParent(root,path){
+  const ks=path.split('.'); const last=ks.pop();
+  return {parent:ks.reduce((o,k)=>o?.[k],root),key:last+'_m'};
+}
+function openMemo(path){
+  const root=Y(); const {parent,key}=memoParent(root,path); if(!parent) return;
+  const memo=parent[key]||{};
+  const cur=parent[path.split('.').pop()];
+  const back=document.createElement('div'); back.className='memoBack';
+  back.innerHTML='<div class="memoBox" role="dialog" aria-modal="true"><h3>Formel &amp; Kommentar</h3>'+
+    '<p class="hint" style="margin-bottom:10px">Aktueller Betrag: <b>'+fmt(cur||0)+'</b></p>'+
+    '<label>Formel (optional)<input id="memoF" autocomplete="off" placeholder="=58.4+76.5+128.8" value="'+esc(memo.f||'')+'"></label>'+
+    '<label>Kommentar<textarea id="memoC" rows="3" placeholder="z.B. Zahnarzt + Apotheke + Optiker">'+esc(memo.c||'')+'</textarea></label>'+
+    '<div class="memoBtns"><button class="miniBtn ghost" id="memoDel">Entfernen</button><span style="flex:1"></span>'+
+    '<button class="miniBtn ghost" id="memoCancel">Abbrechen</button><button class="miniBtn" id="memoSave">Speichern</button></div></div>';
+  document.body.appendChild(back);
+  const close=()=>{ back.remove(); document.removeEventListener('keydown',onKey); };
+  const onKey=e=>{ if(e.key==='Escape') close(); };
+  document.addEventListener('keydown',onKey);
+  back.addEventListener('mousedown',e=>{ if(e.target===back) close(); });
+  $('memoCancel').onclick=close;
+  $('memoDel').onclick=()=>{ delete parent[key]; save(year); close(); renderTab(); };
+  $('memoSave').onclick=()=>{
+    const f=$('memoF').value.trim(), c=$('memoC').value.trim();
+    const nm={};
+    if(f){
+      try{ const r=parseAmountInput(f.startsWith('=')?f:'='+f); parent[path.split('.').pop()]=r.val; nm.f=r.f; }
+      catch(err){ toast('Formel nicht lesbar'); return; }
+    }
+    if(c) nm.c=c;
+    if(nm.f||nm.c) parent[key]=nm; else delete parent[key];
+    save(year); close(); renderTab();
+  };
+  setTimeout(()=>$('memoF').focus(),0);
+}
+document.addEventListener('focusin',e=>{
+  const el=e.target;
+  if(el.dataset&&el.dataset.f&&el.dataset.path){ el.value=el.dataset.f; if(el.select) el.select(); }
+});
+document.addEventListener('focusout',e=>{
+  const el=e.target;
+  if(el.dataset&&el.dataset.f&&el.dataset.shown!=null&&el.value===el.dataset.f) el.value=el.dataset.shown;
+});
 document.addEventListener('focusout',e=>{
   const el=e.target;
   if(!el.classList||!el.classList.contains('labEdit')||!el.dataset.path) return;
@@ -691,10 +802,21 @@ document.addEventListener('change',e=>{
   // tatsächlicher Wert 0, sonst wird z.B. ein leerer Depotwert als Totalverlust
   // gewertet statt einfach wieder den Platzhalter zu zeigen.
   const clearedOptional=el.placeholder&&el.value.trim()==='';
-  const val=clearedOptional?null:kind==='num'?pAmt(el.value):kind==='int'?pInt(el.value):kind==='rate'?pRate(el.value):kind==='pct'?pPct(el.value):kind==='bool'?el.checked:el.value;
+  let amt=null;
+  if(kind==='num'&&!clearedOptional){
+    try{ amt=parseAmountInput(el.value); }
+    catch(err){ toast('Formel nicht lesbar: '+el.value); renderTab(); return; }
+  }
+  const val=clearedOptional?null:kind==='num'?amt.val:kind==='int'?pInt(el.value):kind==='rate'?pRate(el.value):kind==='pct'?pPct(el.value):kind==='bool'?el.checked:el.value;
   const scope=el.dataset.scope||'year';
   const root=scope==='settings'?settings:Y();
   setPath(root,el.dataset.path,val);
+  if(el.dataset.memo&&scope==='year'){
+    const {parent,key}=memoParent(root,el.dataset.path);
+    const nm={...(parent[key]||{})};
+    if(amt&&amt.f) nm.f=amt.f; else delete nm.f;
+    if(nm.f||nm.c) parent[key]=nm; else delete parent[key];
+  }
   if(scope==='year'&&root.netto){
     // 13. Lohn folgt automatisch dem 12. Lohn, ausser er wurde manuell abweichend gesetzt
     if(el.dataset.path==='netto.brutto12'&&root.netto.brutto13Auto!==false) root.netto.brutto13=val;
@@ -889,7 +1011,7 @@ function sideCard(side,title){
   h+='<tr><td>Startkapital Zahlungskonto</td><td>'+inp('calc.'+side+'.start',s.start,{cls:'inpWide'})+'</td><td></td></tr>';
   (s.income||[]).forEach((i,ix)=>{
     h+='<tr><td class="labCol">'+inp('calc.'+side+'.income.'+ix+'.label',i.label,{lab:1,kind:'text'})+'</td>'+
-       '<td>'+inp('calc.'+side+'.income.'+ix+'.value',i.value)+'</td>'+
+       '<td>'+inp('calc.'+side+'.income.'+ix+'.value',i.value,{memo:1})+'</td>'+
        '<td>'+reorderBtns('calc.'+side+'.income',ix,s.income.length)+'</td></tr>';
   });
   h+='<tr><td colspan="3"><button class="miniBtn ghost" data-act="add" data-p="calc.'+side+'.income">＋ Lohn/Gutschrift</button></td></tr>';
@@ -899,7 +1021,7 @@ function sideCard(side,title){
     h+='<tr><td colspan="3" class="grpCap">'+inp('calc.'+side+'.groups.'+gi+'.name',g.name,{lab:1,kind:'text'})+'</td></tr>';
     (g.items||[]).forEach((i,ix)=>{
       h+='<tr><td class="labCol">'+inp('calc.'+side+'.groups.'+gi+'.items.'+ix+'.label',i.label,{lab:1,kind:'text'})+'</td>'+
-         '<td>'+inp('calc.'+side+'.groups.'+gi+'.items.'+ix+'.value',i.value)+'</td>'+
+         '<td>'+inp('calc.'+side+'.groups.'+gi+'.items.'+ix+'.value',i.value,{memo:1})+'</td>'+
          '<td>'+reorderBtns('calc.'+side+'.groups.'+gi+'.items',ix,g.items.length)+'</td></tr>';
     });
     h+='<tr><td colspan="3" style="border:none"><button class="miniBtn ghost" data-act="add" data-p="calc.'+side+'.groups.'+gi+'.items">＋ Position</button></td></tr>';
@@ -1087,7 +1209,7 @@ function renderKonten(){
   const notAcc=findNotAcc(accs);
   const notZiel=settings.notgroschenZiel||30000;
   const depotAccs=findDepotAccs(accs);
-  h+='<div class="cardGrid">';
+  h+='<div class="cardGrid kontenGrid">';
   accs.forEach((a,ai)=>{
     const l13=lohn13For(a);
     const saldi=accountSaldi(a);
@@ -1148,8 +1270,8 @@ function renderKonten(){
       const m=a.months[mi]||{};
       h+='<tr><td class="mCol">'+M.slice(0,3)+'</td>'+
         '<td>'+inp('accounts.'+ai+'.months.'+mi+'.prognose',m.prognose??'')+'</td>'+
-        '<td>'+inp('accounts.'+ai+'.months.'+mi+'.plus',m.plus||'')+'</td>'+
-        '<td>'+inp('accounts.'+ai+'.months.'+mi+'.minus',m.minus||'')+'</td>'+
+        '<td>'+inp('accounts.'+ai+'.months.'+mi+'.plus',m.plus||'',{memo:1})+'</td>'+
+        '<td>'+inp('accounts.'+ai+'.months.'+mi+'.minus',m.minus||'',{memo:1})+'</td>'+
         '<td class="num">'+fmt(saldi[mi])+(saldi.usedProg[mi]?' <span class="pill" title="Basiert auf Prognose, noch kein echter Wert erfasst">Ø</span>':'')+
         (saldi.waiting[mi]?' <span class="pill" title="Tages-Sperre aktiv: zählt erst ab dem Investitionstag">'+ic('hourglass')+'</span>':'')+'</td></tr>';
     });
@@ -1721,6 +1843,7 @@ function renderSettings(){
 async function handleAction(d){
   const yy=Y();
   switch(d.act){
+    case 'memo': openMemo(d.path); return;
     case 'add': getPath(yy,d.p).push({label:'Neu',value:0}); break;
     case 'copyFixFromPrevYear': {
       const prevY=years[String(+year-1)];
